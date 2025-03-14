@@ -1,0 +1,14 @@
+[project]
+name = "docker_sandbox_example"
+version = "0.1.0"
+description = "Docker sandbox example with Celery"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "celery>=5.3.6",
+    "redis>=5.0.1",
+    "python-dotenv>=1.0.0",
+    "uv>=0.1.12",
+    "docker>=7.0.0",
+    "watchdog>=6.0.0",
+]
