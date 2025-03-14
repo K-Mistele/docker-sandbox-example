@@ -2,6 +2,10 @@ from celery import Celery
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import docker
+
+client = docker.from_env()
+client.images.build(path='.', tag='sandbox', dockerfile='Dockerfile.sandbox') # make sure the sandbox image is available
 
 # Load environment variables from .env file in project root
 load_dotenv()
