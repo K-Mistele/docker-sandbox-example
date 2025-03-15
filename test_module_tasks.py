@@ -23,7 +23,7 @@ async def run_celery_task(task, correlation_id: str, *args, **kwargs):
 
 
 
-correlation_id = "a78c2b54-b41e-4bff-9442-f25c4bf8b3bp"
+correlation_id = "a78c2b54-b41e-4bff-9442-f25c4bf8b3bd"
 
 async def test_install_module():
     result = await run_celery_task(clone_and_install_package, correlation_id, "https://github.com/k-mistele/example_python_package")

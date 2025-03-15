@@ -41,7 +41,7 @@ app.conf.beat_schedule = {
     'cleanup-inactive-containers': {
         'task': 'app.tasks.cleanup_inactive_containers',
         'schedule': timedelta(minutes=15),  # Run every 15 minutes
-        'kwargs': {'inactivity_hours': 1.0},  # 1 hour inactivity threshold
+        'kwargs': {'inactivity_hours': 0.5},  # 30 minutes inactivity threshold
     },
 }
 

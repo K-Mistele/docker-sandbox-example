@@ -11,4 +11,5 @@ dependencies = [
     "uv>=0.1.12",
     "docker>=7.0.0",
     "watchdog>=6.0.0",
+    "eventlet>=0.39.1",
 ]
