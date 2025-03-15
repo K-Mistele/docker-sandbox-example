@@ -6,4 +6,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # install git
 RUN apt-get update && apt-get install -y git
 
+CMD mkdir -p /app
 WORKDIR /app
+
+ENTRYPOINT python
+
+RUN useradd python --shell /bin/bash -m
+RUN chown -R python:python /app
+USER python

@@ -93,7 +93,7 @@ class ContainerManager:
             logger.info(f"Creating new container for correlation_id={correlation_id}")
             container = self.client.containers.run(
                 self.image_tag,
-                entrypoint="",
+                #entrypoint="",
                 tty=True,  # allocating a pseudo-TTY to keep the container alive
                 detach=True,
                 # Resource constraints
@@ -126,18 +126,29 @@ class ContainerManager:
         
         container_id = task_tracker.get_container_id(correlation_id)
         if not container_id:
+            logger.info(f"No container ID found in Redis for correlation_id={correlation_id}")
             return None
         
         try:
-            return self.client.containers.get(container_id)
+            logger.debug(f"Attempting to get container {container_id} for correlation_id={correlation_id}")
+            container = self.client.containers.get(container_id)
+            logger.debug(f"Found container {container_id} with status: {container.status}")
+            return container
         except docker.errors.NotFound:
             logger.warning(f"Container {container_id} not found for correlation_id={correlation_id}. Will create a new one.")
             # Clear the container ID from Redis since it doesn't exist anymore
             task_tracker.set_container_id(correlation_id, None)
             return None
+        except docker.errors.APIError as e:
+            logger.error(f"Docker API error getting container {container_id}: {str(e)}")
+            # If it's a 404 or similar error, clear the container ID
+            if "404" in str(e) or "No such container" in str(e):
+                logger.warning(f"Container {container_id} not found (API error). Clearing from Redis.")
+                task_tracker.set_container_id(correlation_id, None)
+            return None
         except Exception as e:
             logger.error(f"Error getting container {container_id}: {str(e)}")
-            raise
+            return None
     
     def ensure_container(self, correlation_id: str) -> docker.models.containers.Container:
         """
@@ -154,19 +165,56 @@ class ContainerManager:
         
         container = self.get_container(correlation_id)
         if container:
-            # Check if the container is running
-            if container.status != "running":
-                logger.info(f"Starting container {container.id} for correlation_id={correlation_id}")
-                try:
-                    container.start()
-                except Exception as e:
-                    logger.error(f"Failed to start container {container.id}: {str(e)}")
-                    # If we can't start the container, create a new one
-                    container_id = self.create_container(correlation_id)
-                    return self.client.containers.get(container_id)
+            # Refresh container state from Docker daemon
+            try:
+                container.reload()
+                # Check if the container is running
+                if container.status != "running":
+                    logger.info(f"Container {container.id} exists but is not running (status: {container.status}). Attempting to start it.")
+                    try:
+                        container.start()
+                        # Verify the container started successfully
+                        container.reload()
+                        if container.status != "running":
+                            logger.warning(f"Container {container.id} failed to start properly. Creating a new one.")
+                            # Remove the old container
+                            try:
+                                container.remove(force=True)
+                            except Exception as e:
+                                logger.warning(f"Failed to remove container {container.id}: {str(e)}")
+                            # Create a new container
+                            container_id = self.create_container(correlation_id)
+                            return self.client.containers.get(container_id)
+                        else:
+                            logger.info(f"Successfully started container {container.id}")
+                    except Exception as e:
+                        logger.error(f"Failed to start container {container.id}: {str(e)}")
+                        # If we can't start the container, create a new one
+                        logger.info(f"Creating a new container for correlation_id={correlation_id}")
+                        # Try to remove the old container
+                        try:
+                            container.remove(force=True)
+                        except Exception as remove_error:
+                            logger.warning(f"Failed to remove container {container.id}: {str(remove_error)}")
+                        # Create a new container
+                        container_id = self.create_container(correlation_id)
+                        return self.client.containers.get(container_id)
+            except docker.errors.NotFound:
+                logger.warning(f"Container {container.id} disappeared during reload. Creating a new one.")
+                # Container disappeared, create a new one
+                container_id = self.create_container(correlation_id)
+                return self.client.containers.get(container_id)
+            except Exception as e:
+                logger.error(f"Error checking container {container.id}: {str(e)}")
+                # If there's an error checking the container, create a new one
+                logger.info(f"Creating a new container for correlation_id={correlation_id}")
+                container_id = self.create_container(correlation_id)
+                return self.client.containers.get(container_id)
+                
             return container
         
         # Container doesn't exist or wasn't found, create a new one
+        logger.info(f"No container found for correlation_id={correlation_id}. Creating a new one.")
         container_id = self.create_container(correlation_id)
         return self.client.containers.get(container_id)
     
@@ -183,10 +231,45 @@ class ContainerManager:
         """
         self._check_docker_available()
         
-        container = self.ensure_container(correlation_id)
-        
-        logger.info(f"Executing command in container {container.id} for correlation_id={correlation_id}: {command}")
         try:
+            # Get the container and ensure it's running
+            container = self.ensure_container(correlation_id)
+            
+            # Double-check that the container is actually running
+            container.reload()  # Refresh container state from Docker daemon
+            if container.status != "running":
+                logger.warning(f"Container {container.id} for correlation_id={correlation_id} is not running (status: {container.status}). Attempting to start it.")
+                try:
+                    container.start()
+                    container.reload()  # Refresh state after starting
+                    logger.info(f"Successfully started container {container.id} for correlation_id={correlation_id}")
+                except Exception as e:
+                    logger.error(f"Failed to start container {container.id}: {str(e)}")
+                    # If we can't start the container, create a new one
+                    logger.info(f"Creating a new container for correlation_id={correlation_id}")
+                    container_id = self.create_container(correlation_id)
+                    container = self.client.containers.get(container_id)
+            
+            logger.info(f"Executing command in container {container.id} for correlation_id={correlation_id}: {command}")
+            result = container.exec_run(["bash", "-c", command])
+            
+            return {
+                "exit_code": result.exit_code,
+                "output": result.output.decode('utf-8') if result.output else "",
+                "container_id": container.id,
+                "correlation_id": correlation_id,
+                "command": command,
+                "success": result.exit_code == 0
+            }
+        except docker.errors.NotFound as e:
+            # Container was removed between our checks
+            logger.warning(f"Container for correlation_id={correlation_id} was not found: {str(e)}. Creating a new one.")
+            # Create a new container and try again
+            container_id = self.create_container(correlation_id)
+            container = self.client.containers.get(container_id)
+            
+            # Execute the command in the new container
+            logger.info(f"Executing command in new container {container.id} for correlation_id={correlation_id}: {command}")
             result = container.exec_run(["bash", "-c", command])
             
             return {
@@ -198,11 +281,11 @@ class ContainerManager:
                 "success": result.exit_code == 0
             }
         except Exception as e:
-            logger.error(f"Failed to execute command in container {container.id}: {str(e)}")
+            logger.error(f"Failed to execute command in container for correlation_id={correlation_id}: {str(e)}")
             return {
                 "exit_code": 1,
                 "output": f"Error executing command: {str(e)}",
-                "container_id": container.id,
+                "container_id": task_tracker.get_container_id(correlation_id),
                 "correlation_id": correlation_id,
                 "command": command,
                 "success": False
