@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import docker
+from datetime import timedelta
 
 client = docker.from_env()
 client.images.build(path='.', tag='sandbox', dockerfile='Dockerfile.sandbox') # make sure the sandbox image is available
@@ -34,6 +35,15 @@ app.conf.update(
     # RPC backend specific settings
     result_expires=3600,  # Results expire in 1 hour
 )
+
+# Configure the Celery beat schedule
+app.conf.beat_schedule = {
+    'cleanup-inactive-containers': {
+        'task': 'app.tasks.cleanup_inactive_containers',
+        'schedule': timedelta(minutes=15),  # Run every 15 minutes
+        'kwargs': {'inactivity_hours': 1.0},  # 1 hour inactivity threshold
+    },
+}
 
 # Import tasks so they are registered with Celery
 from app.tasks import *  # noqa 

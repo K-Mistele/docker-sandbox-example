@@ -208,4 +208,25 @@ def execute_command(self, correlation_id: str, command: str) -> dict:
         
     except Exception as e:
         logging.error(f"Failed to execute command for correlation_id={correlation_id}: {str(e)}")
-        raise 
+        raise
+
+@shared_task
+def cleanup_inactive_containers(inactivity_hours: float = 1.0):
+    """
+    Stop and remove containers that have been inactive for more than the specified hours.
+    
+    Args:
+        inactivity_hours: Number of hours of inactivity before stopping a container
+    """
+    logging.info(f"Running cleanup of inactive containers (inactivity threshold: {inactivity_hours} hours)")
+    inactive_containers = task_tracker.cleanup_inactive_containers(inactivity_hours)
+    
+    if inactive_containers:
+        logging.info(f"Cleaned up {len(inactive_containers)} inactive containers: {', '.join(inactive_containers)}")
+    else:
+        logging.info("No inactive containers found to clean up")
+    
+    return {
+        "status": "success",
+        "inactive_containers_removed": inactive_containers
+    } 

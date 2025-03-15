@@ -18,6 +18,7 @@ class TaskState:
     task_history: List[str] = field(default_factory=list)
     container_id: Optional[str] = None
     container_created_at: Optional[datetime] = None
+    last_task_completed_at: Optional[datetime] = None
 
     def to_dict(self) -> dict:
         """Convert TaskState to a dictionary for Redis storage."""
@@ -29,7 +30,8 @@ class TaskState:
             "running_task_count": self.running_task_count,
             "task_history": self.task_history,
             "container_id": self.container_id,
-            "container_created_at": self.container_created_at.isoformat() if self.container_created_at else None
+            "container_created_at": self.container_created_at.isoformat() if self.container_created_at else None,
+            "last_task_completed_at": self.last_task_completed_at.isoformat() if self.last_task_completed_at else None
         }
 
     @classmethod
@@ -43,7 +45,8 @@ class TaskState:
             running_task_count=data["running_task_count"],
             task_history=data["task_history"],
             container_id=data.get("container_id"),
-            container_created_at=datetime.fromisoformat(data["container_created_at"]) if data.get("container_created_at") else None
+            container_created_at=datetime.fromisoformat(data["container_created_at"]) if data.get("container_created_at") else None,
+            last_task_completed_at=datetime.fromisoformat(data["last_task_completed_at"]) if data.get("last_task_completed_at") else None
         )
 
 class TaskTracker:
@@ -123,6 +126,7 @@ class TaskTracker:
                         state = TaskState.from_dict(json.loads(data))
                         state.running_task_count = max(0, state.running_task_count - 1)
                         state.last_seen = now
+                        state.last_task_completed_at = now
                         
                         pipe.multi()
                         pipe.set(key, json.dumps(state.to_dict()))
@@ -252,7 +256,10 @@ class TaskTracker:
             data = self.redis.get(key)
             if data:
                 state = TaskState.from_dict(json.loads(data))
-                if ((now - state.last_seen).total_seconds() > max_age_hours * 3600
+                # Check if the task has no running tasks and the last task completed more than max_age_hours ago
+                # If last_task_completed_at is None, fall back to last_seen
+                last_activity = state.last_task_completed_at or state.last_seen
+                if ((now - last_activity).total_seconds() > max_age_hours * 3600
                     and state.running_task_count == 0):
                     
                     # If there's a container associated with this correlation ID, remove it
@@ -265,6 +272,42 @@ class TaskTracker:
                     # Delete the task state
                     self.redis.delete(key)
                     logger.info(f"Cleaned up task state for correlation_id={state.correlation_id}")
+                    
+    def cleanup_inactive_containers(self, inactivity_hours: float = 1.0):
+        """Stop and remove containers that have been inactive for more than the specified hours."""
+        now = datetime.utcnow()
+        pattern = f"{self.key_prefix}*"
+        inactivity_seconds = int(inactivity_hours * 3600)
+        
+        # Import here to avoid circular imports
+        from .container_manager import container_manager
+        
+        inactive_containers = []
+        
+        for key in self.redis.scan_iter(pattern):
+            data = self.redis.get(key)
+            if data:
+                state = TaskState.from_dict(json.loads(data))
+                # Only process states with containers and no running tasks
+                if state.container_id and state.running_task_count == 0:
+                    # If last_task_completed_at is None, fall back to last_seen
+                    last_activity = state.last_task_completed_at or state.last_seen
+                    inactive_seconds = (now - last_activity).total_seconds()
+                    
+                    if inactive_seconds > inactivity_seconds:
+                        correlation_id = state.correlation_id
+                        logger.info(f"Container for correlation_id={correlation_id} has been inactive for {inactive_seconds/3600:.2f} hours, stopping and removing")
+                        
+                        try:
+                            # First stop the container
+                            container_manager.stop_container(correlation_id)
+                            # Then remove it
+                            container_manager.remove_container(correlation_id)
+                            inactive_containers.append(correlation_id)
+                        except Exception as e:
+                            logger.error(f"Failed to stop/remove container for correlation_id={correlation_id}: {str(e)}")
+        
+        return inactive_containers
 
 # Global task tracker instance
 task_tracker = TaskTracker() 

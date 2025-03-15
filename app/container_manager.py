@@ -250,6 +250,7 @@ class ContainerManager:
         
         logger.info(f"Removing container {container.id} for correlation_id={correlation_id}")
         try:
+            container.stop()
             container.remove(force=True)
             return True
         except Exception as e:
