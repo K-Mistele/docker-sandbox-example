@@ -131,7 +131,9 @@ class ContainerManager:
         try:
             return self.client.containers.get(container_id)
         except docker.errors.NotFound:
-            logger.warning(f"Container {container_id} not found for correlation_id={correlation_id}")
+            logger.warning(f"Container {container_id} not found for correlation_id={correlation_id}. Will create a new one.")
+            # Clear the container ID from Redis since it doesn't exist anymore
+            task_tracker.set_container_id(correlation_id, None)
             return None
         except Exception as e:
             logger.error(f"Error getting container {container_id}: {str(e)}")
@@ -164,7 +166,7 @@ class ContainerManager:
                     return self.client.containers.get(container_id)
             return container
         
-        # Create a new container
+        # Container doesn't exist or wasn't found, create a new one
         container_id = self.create_container(correlation_id)
         return self.client.containers.get(container_id)
     
@@ -185,7 +187,7 @@ class ContainerManager:
         
         logger.info(f"Executing command in container {container.id} for correlation_id={correlation_id}: {command}")
         try:
-            result = container.exec_run(command)
+            result = container.exec_run(["bash", "-c", command])
             
             return {
                 "exit_code": result.exit_code,
