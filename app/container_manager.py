@@ -100,7 +100,10 @@ class ContainerManager:
                 mem_limit="4g",
                 cpu_period=100_000,
                 cpu_quota=200_000,
-                cpu_shares=512
+                cpu_shares=512,
+                security_opt=['no-new-privileges'], # prevent privilege escalation inside the container
+                cap_drop=['ALL'], # drop all linux kernel capabilities
+                cap_add=[], # add no linux kernel capabilities
             )
             
             # Store the container ID
