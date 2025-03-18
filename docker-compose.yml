@@ -14,5 +14,17 @@ services:
     image: redis:latest
     ports:
       - "127.0.0.1:6379:6379"
-  
+
+  sandbox-manager:
+    container_name: sandbox-manager
+    build: 
+      context: .
+      dockerfile: Dockerfile.worker
+    volumes: 
+      - /var/run/docker.sock:/var/run/docker.sock 
+    environment: 
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?error}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?error}
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis  
   

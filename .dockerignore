@@ -1,0 +1,4 @@
+.env 
+celerybeat-schedule.db
+.venv
+__pycache__

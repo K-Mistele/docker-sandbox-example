@@ -8,6 +8,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+redis_host = os.getenv('REDIS_HOST', 'localhost')
+redis_port = int(os.getenv('REDIS_PORT', 6379))
+
 @dataclass
 class TaskState:
     correlation_id: str
@@ -52,8 +55,7 @@ class TaskState:
 class TaskTracker:
     def __init__(self):
         """Initialize Redis connection for task tracking."""
-        redis_host = os.getenv('REDIS_HOST', 'localhost')
-        redis_port = int(os.getenv('REDIS_PORT', 6379))
+
         self.redis = redis.Redis(
             host=redis_host,
             port=redis_port,
